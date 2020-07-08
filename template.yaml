@@ -1,0 +1,226 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Globals: # More info about Globals: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-specification-template-anatomy-globals.html
+  Function:
+    Timeout: 20
+
+Resources:
+  #########################################
+  ### ANTI-CORRUPTION-SERVICE RESOURCES ###
+  #########################################
+  JobEventsTopic:
+    Type: AWS::SNS::Topic # More info about SNS Resource: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-sns-topic.html
+    Properties:
+      TopicName: JobEvents.fifo
+      FifoTopic: true
+      ContentBasedDeduplication: false
+
+  AntiCorruptionFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-function.html
+    Properties:
+      CodeUri: anti-corruption-service/
+      Handler: app.lambda_handler
+      Runtime: python3.7
+      MemorySize: 256
+      Environment:
+        Variables:
+          TOPIC_ARN: !Ref JobEventsTopic
+      Policies:
+        - SNSPublishMessagePolicy: # https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-policy-template-list.html#sqs-publish-message-policy
+            TopicName: !GetAtt JobEventsTopic.TopicName
+      Events:
+        Trigger:
+          Type: Schedule # More info about Schedule Event Source: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-property-function-schedule.html
+          Properties:
+            Schedule: 'rate(1 minute)'
+
+  ###################################
+  ### ANALYTICS-SERVICE RESOURCES ###
+  ###################################
+  AnalyticsJobEventsQueue:
+    Type: AWS::SQS::Queue # More info about SQS Resource: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-sqs-queues.html
+    Properties:
+      QueueName: AnalyticsJobEvents.fifo
+      FifoQueue: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt AnalyticsJobEventsQueueDLQ.Arn
+        maxReceiveCount: 3
+
+  AnalyticsJobEventsQueueDLQ:
+    Type: AWS::SQS::Queue # More info about SQS Resource: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-sqs-queues.html
+    Properties:
+      QueueName: AnalyticsJobEventsDLQ.fifo
+      FifoQueue: true
+
+  AnalyticsJobEventsSubscriptionDLQ:
+    Type: AWS::SQS::Queue # More info about SQS Resource: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-sqs-queues.html
+    Properties:
+      QueueName: AnalyticsSubscriptionDLQ.fifo
+      FifoQueue: true
+
+  AnalyticsFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-function.html
+    Properties:
+      CodeUri: analytics-service/
+      Handler: app.lambda_handler
+      Runtime: python3.7
+      MemorySize: 256
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref AnalyticsBucket
+      Policies:
+        - S3WritePolicy: # https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-policy-template-list.html#s3-write-policy
+            BucketName: !Ref AnalyticsBucket
+      Events:
+        Trigger:
+          Type: SQS # More info about SQS Event Source: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-property-function-sqs.html
+          Properties:
+            Queue: !GetAtt AnalyticsJobEventsQueue.Arn
+            BatchSize: 10
+
+  AnalyticsBucket:
+    Type: AWS::S3::Bucket # More info about S3 Resource: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-s3-bucket.html
+
+  AnalyticsJobEventsQueuePolicy:
+    Type: AWS::SQS::QueuePolicy # More info about SQS Queue Policy Resource: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-sqs-policy.html
+    Properties:
+      Queues:
+        - !Ref AnalyticsJobEventsQueue
+        - !Ref AnalyticsJobEventsSubscriptionDLQ
+      PolicyDocument:
+        Statement:
+          Effect: Allow
+          Principal: '*'
+          Action: sqs:SendMessage
+          Resource: '*'
+          Condition:
+            ArnEquals:
+              aws:SourceArn: !Ref JobEventsTopic
+
+  AnalyticsJobEventsQueueToJobEventsTopicSubscription:
+    Type: AWS::SNS::Subscription # More info about SNS Topic Subscription Resource: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-sns-subscription.html
+    Properties:
+      Endpoint: !GetAtt AnalyticsJobEventsQueue.Arn
+      Protocol: sqs
+      RawMessageDelivery: true
+      TopicArn: !Ref JobEventsTopic
+      RedrivePolicy: !Sub '{"deadLetterTargetArn": "${AnalyticsJobEventsSubscriptionDLQ.Arn}"}'
+
+  ###################################
+  ### INVENTORY SERVICE RESOURCES ###
+  ###################################
+  InventoryJobEventsQueue:
+    Type: AWS::SQS::Queue # More info about SQS Resource: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-sqs-queues.html
+    Properties:
+      QueueName: InventoryJobEvents.fifo
+      FifoQueue: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt InventoryJobEventsQueueDLQ.Arn
+        maxReceiveCount: 3
+
+  InventoryJobEventsQueueDLQ:
+    Type: AWS::SQS::Queue # More info about SQS Resource: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-sqs-queues.html
+    Properties:
+      QueueName: InventoryJobEventsDLQ.fifo
+      FifoQueue: true
+
+  InventoryJobEventsQueueSubscriptionDLQ:
+    Type: AWS::SQS::Queue # More info about SQS Resource: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-sqs-queues.html
+    Properties:
+      QueueName: InventorySubscriptionDLQ.fifo
+      FifoQueue: true
+
+  InventoryFunction:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-function.html
+    Properties:
+      CodeUri: inventory-service/
+      Handler: app.lambda_handler
+      Runtime: python3.7
+      MemorySize: 256
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref InventoryTable
+      Policies:
+        - DynamoDBCrudPolicy: # https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-policy-template-list.html#dynamo-db-crud-policy
+            TableName: !Ref InventoryTable
+      Events:
+        Trigger:
+          Type: SQS # More info about SQS Event Source: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-property-function-sqs.html
+          Properties:
+            Queue: !GetAtt InventoryJobEventsQueue.Arn
+            BatchSize: 10
+
+  InventoryTable:
+    Type: AWS::Serverless::SimpleTable # More info about SimpleTable Resource: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-resource-simpletable.html
+    Properties:
+      TableName: InventoryTable
+      PrimaryKey:
+        Name: id
+        Type: String
+
+  InventoryJobEventsQueuePolicy:
+    Type: AWS::SQS::QueuePolicy # More info about SQS Queue Policy Resource: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-sqs-policy.html
+    Properties:
+      Queues:
+        - !Ref InventoryJobEventsQueue
+        - !Ref InventoryJobEventsQueueSubscriptionDLQ
+      PolicyDocument:
+        Statement:
+          Effect: Allow
+          Principal: '*'
+          Action: sqs:SendMessage
+          Resource: '*'
+          Condition:
+            ArnEquals:
+              aws:SourceArn: !Ref JobEventsTopic
+
+  InventoryJobEventsQueueToJobEventsTopicSubscription:
+    Type: AWS::SNS::Subscription # More info about SNS Topic Subscription Resource: https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-sns-subscription.html
+    Properties:
+      Endpoint: !GetAtt InventoryJobEventsQueue.Arn
+      Protocol: sqs
+      RawMessageDelivery: true
+      TopicArn: !Ref JobEventsTopic
+      FilterPolicy: '{"eventType":["JobCreated", "JobDeleted"]}'
+      RedrivePolicy: !Sub '{"deadLetterTargetArn": "${InventoryJobEventsQueueSubscriptionDLQ.Arn}"}'
+
+Outputs:
+  AntiCorruptionFunction:
+    Description: "AWS Lambda function ARN for the anti-corruption service"
+    Value: !GetAtt AntiCorruptionFunction.Arn
+  JobEventsTopic:
+    Description: "Amazon SNS topic ARN for the anti-corruption service job events topic"
+    Value: !Ref JobEventsTopic
+
+  AnalyticsFunction:
+    Description: "AWS Lambda function ARN for the analytics service"
+    Value: !GetAtt AnalyticsFunction.Arn
+  AnalyticsBucket:
+    Description: "Amazon S3 bucket name for the analytics service job events bucket"
+    Value: !Ref AnalyticsBucket
+  AnalyticsJobEventsQueueDLQ:
+    Description: "Amazon SQS queue ARN for the analytics service job events DLQ"
+    Value: !GetAtt AnalyticsJobEventsQueueDLQ.Arn
+  AnalyticsJobEventsSubscriptionDLQ:
+    Description: "Amazon SQS queue ARN for the analytics service job events subscription DLQ"
+    Value: !GetAtt AnalyticsJobEventsSubscriptionDLQ.Arn
+  AnalyticsJobEventsQueue:
+    Description: "Amazon SQS queue ARN for the analytics service job events queue"
+    Value: !GetAtt AnalyticsJobEventsQueue.Arn
+
+  InventoryFunction:
+    Description: "AWS Lambda function ARN for the inventory service"
+    Value: !GetAtt InventoryFunction.Arn
+  InventoryTable:
+    Description: "Amazon DynamoDB table name for the job events in the inventory service"
+    Value: !Ref InventoryTable
+  InventoryJobEventsQueueDLQ:
+    Description: "Amazon SQS queue ARN for the inventory service job events DLQ"
+    Value: !GetAtt InventoryJobEventsQueueDLQ.Arn
+  InventoryJobEventsQueueSubscriptionDLQ:
+    Description: "Amazon SQS queue ARN for the inventory service job events subscription DLQ"
+    Value: !GetAtt InventoryJobEventsQueueSubscriptionDLQ.Arn
+  InventoryJobEventsQueue:
+    Description: "Amazon SQS queue ARN for the inventory service job events queue"
+    Value: !GetAtt InventoryJobEventsQueue.Arn
