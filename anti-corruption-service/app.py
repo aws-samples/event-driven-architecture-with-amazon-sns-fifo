@@ -27,7 +27,7 @@ def send_job_created_event(jobId):
         Subject=f'Job {jobId} created',
         MessageDeduplicationId=messageId,
         MessageGroupId=f'JOB-{jobId}',
-        Message={
+        Message=json.dumps({
             "id": messageId,
             "jobId": jobId,
             "eventCreated": str(datetime.now()),
@@ -40,7 +40,7 @@ def send_job_created_event(jobId):
                 "jobRequirements": "Ut enim ad minim veniam, quis nostrud exercitation ullamco ...",
                 "anualSalary": "$ 55,000"
             }
-        },
+        }),
         MessageAttributes = {
             "eventType": {
                 "DataType": "String",
@@ -60,7 +60,7 @@ def send_job_updated_event(jobId):
         Subject=f'Job {jobId} updated',
         MessageDeduplicationId=messageId,
         MessageGroupId=f'JOB-{jobId}',
-        Message={
+        Message=json.dumps({
             "id": messageId,
             "jobId": jobId,
             "eventCreated": str(datetime.now()),
@@ -69,7 +69,7 @@ def send_job_updated_event(jobId):
             "eventDetails": {
                 "anualSalary": "$ 57,000"
             }
-        },
+        }),
         MessageAttributes = {
             "eventType": {
                 "DataType": "String",
@@ -89,7 +89,7 @@ def send_job_deleted_event(jobId):
         Subject=f'Job {jobId} deleted',
         MessageDeduplicationId=messageId,
         MessageGroupId=f'JOB-{jobId}',
-        Message={
+        Message=json.dumps({
             "id": messageId,
             "jobId": jobId,
             "eventCreated": str(datetime.now()),
@@ -98,7 +98,7 @@ def send_job_deleted_event(jobId):
             "eventDetails": {
                 "reason": "filled"
             }
-        },
+        }),
         MessageAttributes = {
             "eventType": {
                 "DataType": "String",

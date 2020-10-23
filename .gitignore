@@ -2,5 +2,6 @@
 .venv/
 .vscode/
 .idea/
+virtualenv/
 
 samconfig.toml
